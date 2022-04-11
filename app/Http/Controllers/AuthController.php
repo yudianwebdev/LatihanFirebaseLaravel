@@ -16,17 +16,73 @@ use Kreait\Firebase\Exception\Auth\FailedToVerifyToken;
 
 class AuthController extends Controller
 {
+
+    public function signup(Request $request)
+    {
+        $request->validate([
+            'name' => 'required|string',
+            'email' => 'required|string|email|unique:users',
+            'password' => 'required|string|confirmed'
+        ]);
+        $user = new User([
+            'name' => $request->name,
+            'email' => $request->email,
+            'password' => bcrypt($request->password)
+        ]);
+        $user->save();
+        return response()->json([
+            'message' => 'Successfully created user!'
+        ], 201);
+    }
+
     public function login(Request $request)
     {
         //
         $auth2 = app('firebase.auth');
         $idTokenString = $request->Firebasetoken;
 
-        try { // Try to verify the Firebase credential token with Google
-            // dd($idTokenString);
+        try {
             $verifiedIdToken = $auth2->verifyIdToken($idTokenString);
             $res = $auth2->getUser($verifiedIdToken->claims()->get('sub'));
-            dd($res->emailVerified);
+
+            // dd($res->uid);
+            $userData = User::where('firebaseUID', $res->uid)->first();
+            if (!User::where('firebaseUID', $res->uid)->exists()) {
+                // dd("tes 1");
+                $user = User::create([
+                    "name" => "$res->displayName",
+                    "firebaseUID" => $res->uid,
+                    "email" => $res->email,
+                    "email_verified_at" => $res->emailVerified,
+                    'password' => Hash::make(null)
+
+                ]);
+                return response()->json([
+                    'message' => 'Successfully created user!',
+                    "data" => $user,
+                ], 201);
+            } else {
+
+                // dd("cek", $userData);
+                $tokenResult = $userData->createToken('Personal Access Token');
+                $token = $tokenResult->token;
+                if ($request->remember_me)
+                    $token->expires_at = Carbon::now()->addWeeks(1);
+                $token->save();
+
+                // Return a JSON object containing the token datas
+                // You may format this object to suit your needs
+                return response()->json([
+                    'id' => $userData->id,
+                    'access_token' => $tokenResult->accessToken,
+                    'token_type' => 'Bearer',
+                    'expires_at' => Carbon::parse(
+                        $tokenResult->token->expires_at
+                    )->toDateTimeString()
+                ]);
+            }
+
+            // dd($tesdata);
         } catch (FailedToVerifyToken $e) { // If the token has the wrong format
 
             return response()->json([
@@ -37,59 +93,6 @@ class AuthController extends Controller
             return response()->json([
                 'message' => 'Unauthorized - Token is invalide: ' . $e->getMessage()
             ], 401);
-        }
-        // Retrieve the UID (User ID) from the verified Firebase credential's token
-        $uid = $verifiedIdToken->claims()->get('sub');
-        // dd($uid);
-
-        // Retrieve the user model linked with the Firebase UID
-        $user = User::where('firebaseUID', $uid)->first();
-        // dd($user);
-        if ($user == null) {
-            $sa = User::create([
-                'name' => "joko",
-                'firebaseUID' => $uid,
-                'email' => "joko@gmail.com",
-                'password' => Hash::make("jokojoko")
-            ]);
-            // dd($sa);
-            $response = [
-                'code' => Response::HTTP_CREATED,
-                'massage' => "Success",
-                "data" => $sa
-            ];
-            return response()->json($response, Response::HTTP_CREATED);
-        } else {
-
-
-
-            // Here you could check if the user model exist and if not create it
-            // For simplicity we will ignore this step
-
-            // Once we got a valid user model
-            // Create a Personnal Access Token
-            $tokenResult = $user->createToken('Personal Access Token');
-
-            // Store the created token
-            $token = $tokenResult->token;
-            dd($token);
-
-            // Add a expiration date to the token
-            $token->expires_at = Carbon::now()->addWeeks(1);
-
-            // Save the token to the user
-            $token->save();
-
-            // Return a JSON object containing the token datas
-            // You may format this object to suit your needs
-            return response()->json([
-                'id' => $user->id,
-                'access_token' => $tokenResult->accessToken,
-                'token_type' => 'Bearer',
-                'expires_at' => Carbon::parse(
-                    $tokenResult->token->expires_at
-                )->toDateTimeString()
-            ]);
         }
     }
 }
